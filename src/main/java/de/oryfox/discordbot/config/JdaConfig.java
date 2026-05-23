@@ -23,6 +23,7 @@ public class JdaConfig {
     public JDA jda() {
         if (discordToken == null || discordToken.isBlank()) {
             log.error("Please provide a Discord Bot token.");
+            return null;
         }
         return JDABuilder
                 .create(discordToken, EnumSet.allOf(GatewayIntent.class))
