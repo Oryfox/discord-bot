@@ -1,0 +1,45 @@
+name: Build images and deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: https://git.oryfox.de/actions/checkout@v4
+
+      - name: Docker Buildx einrichten
+        uses: https://git.oryfox.de/docker/setup-buildx-action@v3
+
+      - name: Bei Gitea Container Registry anmelden
+        uses: https://git.oryfox.de/docker/login-action@v3
+        with:
+          registry: git.oryfox.de
+          username: ${{ github.actor }}
+          password: ${{ secrets.PACKAGE_TOKEN }}
+
+      - name: Docker Metadata generieren
+        id: meta-api
+        uses: https://git.oryfox.de/docker/metadata-action@v5
+        with:
+          images: git.oryfox.de/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Docker Image bauen und pushen
+        uses: https://git.oryfox.de/docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          build-args: |
+            COMMIT=${{ github.sha }}
+          tags: ${{ steps.meta-api.outputs.tags }}
