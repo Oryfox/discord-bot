@@ -72,9 +72,9 @@ public class CountingComponent extends ListenerAdapter {
                     event.getMessage().addReaction(Emoji.fromUnicode("U+2705")).queue();
                 } else {
                     event.getMessage().addReaction(Emoji.fromUnicode("U+274C")).queue();
+                    event.getChannel().sendMessage(String.format("<@%s> killed the streak at %d.%n%nLet's start a new try: 1", user.getId(), lastNumber)).queue();
                     userMap = new HashMap<>();
                     lastNumber = 1;
-                    event.getChannel().sendMessage(String.format("<@%s> killed the streak at %d.%n%nLet's start a new try: 1", user.getId(), lastNumber)).queue();
                 }
             }
         }

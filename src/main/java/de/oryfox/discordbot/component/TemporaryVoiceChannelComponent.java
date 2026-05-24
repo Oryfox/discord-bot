@@ -33,7 +33,7 @@ public class TemporaryVoiceChannelComponent extends ListenerAdapter {
     private Category category;
     private final JDA jda;
     private List<String> names;
-    private List<Long> createdChannels = new ArrayList<>();
+    private final List<Long> createdChannels = new ArrayList<>();
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -88,7 +88,7 @@ public class TemporaryVoiceChannelComponent extends ListenerAdapter {
             return;
         }
 
-        var name = names.isEmpty() ? generateChannelNameFromTime() : generateChannelNameFromList();
+        var name = names == null || names.isEmpty() ? generateChannelNameFromTime() : generateChannelNameFromList();
         if (category != null) {
             event.getGuild().createVoiceChannel(name, category)
                     .submit()
