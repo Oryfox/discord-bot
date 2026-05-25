@@ -28,6 +28,7 @@ public class CountingComponent extends ListenerAdapter {
 
     private Map<Long, Instant> userMap;
     private long lastNumber = 1;
+    private long lastUserId;
 
     @PostConstruct
     public void initCounting() {
@@ -56,8 +57,18 @@ public class CountingComponent extends ListenerAdapter {
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
         if (event.getChannel().getId().equalsIgnoreCase(channelId)) {
+            if (event.getAuthor().isBot()) {
+                event.getMessage().delete().queue();
+                return;
+            }
+
             var messageContent = event.getMessage().getContentRaw();
             var user = event.getAuthor();
+
+            if (lastUserId == user.getIdLong()) {
+                event.getMessage().delete().queue();
+                return;
+            }
 
             if (userMap.containsKey(user.getIdLong()) && Instant.now().isBefore(userMap.get(user.getIdLong()).plus(12, ChronoUnit.HOURS))) {
                 event.getMessage().delete().queue();
@@ -69,12 +80,14 @@ public class CountingComponent extends ListenerAdapter {
                 if (number == lastNumber + 1) {
                     lastNumber = number;
                     userMap.put(user.getIdLong(), Instant.now());
+                    lastUserId = user.getIdLong();
                     event.getMessage().addReaction(Emoji.fromUnicode("U+2705")).queue();
                 } else {
                     event.getMessage().addReaction(Emoji.fromUnicode("U+274C")).queue();
                     event.getChannel().sendMessage(String.format("<@%s> killed the streak at %d.%n%nLet's start a new try: 1", user.getId(), lastNumber)).queue();
                     userMap = new HashMap<>();
                     lastNumber = 1;
+                    lastUserId = 0;
                 }
             }
         }
