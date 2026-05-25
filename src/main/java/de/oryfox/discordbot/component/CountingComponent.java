@@ -57,7 +57,7 @@ public class CountingComponent extends ListenerAdapter {
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
         if (event.getChannel().getId().equalsIgnoreCase(channelId)) {
-            if (event.getAuthor().isBot()) {
+            if (event.getAuthor().isBot() && event.getAuthor().getIdLong() != jda.getSelfUser().getIdLong()) {
                 event.getMessage().delete().queue();
                 return;
             }
