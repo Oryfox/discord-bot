@@ -1,7 +1,7 @@
 package de.oryfox.discordbot.model;
 
+import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -9,12 +9,12 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 public class UserLevel {
-    @Id
-    private Long userId;
+    @EmbeddedId
+    private GuildMember guildMember;
     private Long xp;
 
-    public UserLevel(Long userId) {
-        this.userId = userId;
+    public UserLevel(Long userId, Long guildId) {
+        this.guildMember = new GuildMember(userId, guildId);
         this.xp = 0L;
     }
 }

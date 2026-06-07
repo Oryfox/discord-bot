@@ -1,8 +1,11 @@
-package de.oryfox.discordbot.component;
+package de.oryfox.discordbot.features;
 
 import de.oryfox.discordbot.commands.CommandProvider;
+import de.oryfox.discordbot.model.FeatureConfigurator;
+import de.oryfox.discordbot.model.GuildMember;
 import de.oryfox.discordbot.model.UserLevel;
-import de.oryfox.discordbot.repository.UserLevelRepository;
+import de.oryfox.discordbot.persistence.PersistenceService;
+import de.oryfox.discordbot.persistence.UserLevelRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,46 +17,39 @@ import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.InteractionContextType;
+import net.dv8tion.jda.api.interactions.commands.Command;
+import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
-import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.awt.*;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class LevelComponent extends ListenerAdapter implements CommandProvider {
+public class LevelFeature extends ListenerAdapter implements CommandProvider, FeatureConfigurator {
 
     private final JDA jda;
+    private final PersistenceService persistenceService;
     private final UserLevelRepository userLevelRepository;
-
-    @Value("${channels.level.ignored:}")
-    private String ignoredChannelIds;
-
-    private final List<String> ignoredChannel = new ArrayList<>();
 
     private static final String COMMAND_NAME = "level";
 
     @PostConstruct
     public void initLeveling() {
-        if (ignoredChannelIds != null && !ignoredChannelIds.isBlank()) {
-            ignoredChannel.addAll(Arrays.asList(ignoredChannelIds.split(",\\s?")));
-        }
         jda.addEventListener(this);
     }
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
-        var user = event.getAuthor();
-        if (user.isBot()) {
+        var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
+        if (!config.isLevelingEnabled()) {
             return;
         }
-        if (ignoredChannel.stream().anyMatch(c -> c.equalsIgnoreCase(event.getChannel().getId()))) {
+        var user = event.getAuthor();
+        if (user.isBot()) {
             return;
         }
 
@@ -71,7 +67,7 @@ public class LevelComponent extends ListenerAdapter implements CommandProvider {
             gainedXp = 2;
         }
 
-        var userLevel = userLevelRepository.findById(user.getIdLong()).orElseGet(() -> new UserLevel(user.getIdLong()));
+        var userLevel = userLevelRepository.findById(new GuildMember(event.getMember())).orElseGet(() -> new UserLevel(user.getIdLong(), event.getGuild().getIdLong()));
         var oldLevel = calculateLevel(userLevel.getXp());
         userLevel.setXp(userLevel.getXp() + gainedXp);
         userLevelRepository.save(userLevel);
@@ -89,8 +85,13 @@ public class LevelComponent extends ListenerAdapter implements CommandProvider {
 
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
+        var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
         if (event.getName().equalsIgnoreCase(COMMAND_NAME)) {
-            var userLevel = userLevelRepository.findById(event.getUser().getIdLong()).orElseGet(() -> new UserLevel(event.getUser().getIdLong()));
+            if (!config.isLevelingEnabled()) {
+                event.reply("The leveling feature is not enabled on this server.").setEphemeral(true).queue();
+                return;
+            }
+            var userLevel = userLevelRepository.findById(new GuildMember(event.getMember())).orElseGet(() -> new UserLevel(event.getUser().getIdLong(), event.getGuild().getIdLong()));
             var container = Container.of(
                     TextDisplay.of("### Level"),
                     Separator.createInvisible(Separator.Spacing.SMALL),
@@ -114,7 +115,38 @@ public class LevelComponent extends ListenerAdapter implements CommandProvider {
     }
 
     @Override
-    public List<SlashCommandData> getCommands() {
-        return List.of(Commands.slash(COMMAND_NAME, "Shows your current Level and Experience Points"));
+    public List<CommandData> getCommands() {
+        return List.of(Commands.slash(COMMAND_NAME, "Shows your current Level and Experience Points").setContexts(InteractionContextType.GUILD));
+    }
+
+    @Override
+    public String getFeatureName() {
+        return "Leveling";
+    }
+
+    @Override
+    public List<Command.Choice> getActions() {
+        return List.of(
+                new Command.Choice("Disable", "disable"),
+                new Command.Choice("Enable", "enable")
+        );
+    }
+
+    @Override
+    public void execute(SlashCommandInteractionEvent event) {
+        var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
+        var action = event.getOption("action").getAsString();
+        switch (action) {
+            case "enable" -> {
+                config.setLevelingEnabled(true);
+                event.reply("The leveling feature is now enabled").setEphemeral(true).queue();
+            }
+            case "disable" -> {
+                config.setLevelingEnabled(false);
+                event.reply("The leveling feature is now disabled").setEphemeral(true).queue();
+            }
+            default -> event.replyFormat("Unknown action %s for feature %s", action, getFeatureName()).setEphemeral(true).queue();
+        }
+        persistenceService.persist(config);
     }
 }

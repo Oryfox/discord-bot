@@ -1,6 +1,8 @@
-package de.oryfox.discordbot.component;
+package de.oryfox.discordbot.features;
 
 import de.oryfox.discordbot.commands.CommandProvider;
+import de.oryfox.discordbot.model.FeatureConfigurator;
+import de.oryfox.discordbot.persistence.PersistenceService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,21 +18,17 @@ import net.dv8tion.jda.api.components.separator.Separator;
 import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
 import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
-import net.dv8tion.jda.api.entities.IPermissionHolder;
-import net.dv8tion.jda.api.entities.Role;
-import net.dv8tion.jda.api.entities.channel.ChannelType;
-import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.InteractionContextType;
+import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
+import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
-import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
 import net.dv8tion.jda.api.modals.Modal;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -41,20 +39,11 @@ import java.util.TimerTask;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class TicketComponent extends ListenerAdapter implements CommandProvider {
+public class TicketComponent extends ListenerAdapter implements CommandProvider, FeatureConfigurator {
 
     private final JDA jda;
+    private final PersistenceService persistenceService;
 
-    @Value("${channels.ticket.category:}")
-    private String categoryId;
-
-    @Value("${role.ticket.ping:}")
-    private String roleId;
-
-    private Category category;
-    private Role role;
-
-    private int ticketNo = 1;
     private final Timer timer = new Timer();
 
     private static final String COMMAND_NAME = "createticketmessage";
@@ -67,37 +56,31 @@ public class TicketComponent extends ListenerAdapter implements CommandProvider 
 
     @PostConstruct
     public void initTicketComponent() {
-        if (categoryId == null || categoryId.isBlank()) {
-            log.warn("No category id for the ticket system was provided. Using server root for ticket channels.");
-        } else {
-            category = jda.getCategoryById(categoryId);
-            if (category == null) {
-                log.warn("Provided category id for the ticket system appears to be wrong. Fallback to using server root for ticket channels.");
-            }
-        }
-        if (roleId == null || roleId.isBlank()) {
-            log.warn("No specific role id set for moderators/team members. The tickets will only be visible to those with sufficient default permissions.");
-        } else {
-            role = jda.getRoleById(roleId);
-            if (role == null) {
-                log.warn("Provided role id for the ticket system appears to be wrong. The tickets will only be visible to those with sufficient default permissions.");
-            }
-        }
         jda.addEventListener(this);
     }
 
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (event.getName().equalsIgnoreCase(COMMAND_NAME)) {
-            event.reply(":thumbsup:").setEphemeral(true).queue();
-            event.getChannel().sendMessageComponents(createTicketMessageContainer()).useComponentsV2().queue();
+            var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
+            if (config.isTicketSystemEnabled()) {
+                event.reply(":thumbsup:").setEphemeral(true).queue();
+                event.getChannel().sendMessageComponents(createTicketMessageContainer()).useComponentsV2().queue();
+            } else {
+                event.reply("The ticketing system is not enabled.").queue();
+            }
         }
     }
 
     @Override
     public void onButtonInteraction(ButtonInteractionEvent event) {
+        var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
         if (event.getButton().getCustomId().equalsIgnoreCase(BUTTON_ID_CREATE)) {
-            event.replyModal(createTicketModal()).queue();
+            if (config.isTicketSystemEnabled()) {
+                event.replyModal(createTicketModal()).queue();
+            } else {
+                event.reply("The ticketing system is not enabled.").queue();
+            }
         }
         if (event.getButton().getCustomId().equalsIgnoreCase(BUTTON_ID_CLOSE)) {
             event.editButton(event.getButton().asDisabled()).queue();
@@ -122,26 +105,19 @@ public class TicketComponent extends ListenerAdapter implements CommandProvider 
         if (event.getModalId().equalsIgnoreCase(MODAL_ID)) {
             event.reply("Your ticket has been created!").setEphemeral(true).queue();
             TextChannel channel;
-            if (category != null) {
-                channel = category.createTextChannel("Ticket #" + ticketNo++).complete();
-            } else {
-                channel = event.getGuild().createTextChannel("ticket-" + ticketNo++).complete();
-            }
-            var everyone = channel.getGuild().getPublicRole();
-            var action = channel.getManager()
-                    .putPermissionOverride(everyone, List.of(), List.of(Permission.VIEW_CHANNEL))
-                    .putMemberPermissionOverride(event.getMember().getIdLong(), List.of(Permission.VIEW_CHANNEL), List.of());
 
-            if (role != null) {
-                action = action.putRolePermissionOverride(role.getIdLong(), List.of(Permission.MANAGE_CHANNEL), List.of());
-            }
-            action.complete();
+            channel = event.getChannel().asTextChannel().getParentCategory().createTextChannel(String.format("ticket-%s", event.getUser().getName())).complete();
+            var everyone = channel.getGuild().getPublicRole();
+            channel.getManager()
+                    .putPermissionOverride(everyone, List.of(), List.of(Permission.VIEW_CHANNEL))
+                    .putMemberPermissionOverride(event.getMember().getIdLong(), List.of(Permission.VIEW_CHANNEL), List.of())
+                    .complete();
             channel.sendMessageComponents(createTicketCreatedMessageContainer(event.getUser().getId(), String.join(", ", event.getValue(MODAL_TYPE).getAsStringList()), event.getValue(MODAL_DESCRIPTION).getAsString())).useComponentsV2().queue();
         }
     }
 
     @Override
-    public List<SlashCommandData> getCommands() {
+    public List<CommandData> getCommands() {
         return List.of(Commands.slash(COMMAND_NAME, "Create the message for submitting tickets in this channel.")
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR))
                 .setContexts(InteractionContextType.GUILD));
@@ -184,5 +160,36 @@ public class TicketComponent extends ListenerAdapter implements CommandProvider 
                 Separator.createInvisible(Separator.Spacing.SMALL),
                 TextDisplay.of(String.format("-# <t:%s:f>", Instant.now().getEpochSecond()))
         );
+    }
+
+    @Override
+    public String getFeatureName() {
+        return "Ticket System";
+    }
+
+    @Override
+    public List<Command.Choice> getActions() {
+        return List.of(
+                new Command.Choice("Disable", "disable"),
+                new Command.Choice("Enable", "enable")
+        );
+    }
+
+    @Override
+    public void execute(SlashCommandInteractionEvent event) {
+        var config = persistenceService.getConfiguration(event.getGuild().getIdLong());
+        var action = event.getOption("action").getAsString();
+        switch (action) {
+            case "enable" -> {
+                config.setTicketSystemEnabled(true);
+                event.reply("The ticket system feature is now enabled").setEphemeral(true).queue();
+            }
+            case "disable" -> {
+                config.setTicketSystemEnabled(false);
+                event.reply("The ticket system feature is now disabled").setEphemeral(true).queue();
+            }
+            default -> event.replyFormat("Unknown action %s for feature %s", action, getFeatureName()).setEphemeral(true).queue();
+        }
+        persistenceService.persist(config);
     }
 }
