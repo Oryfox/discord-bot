@@ -38,6 +38,7 @@ jobs:
       - name: Docker Image bauen und pushen
         uses: https://git.oryfox.de/docker/build-push-action@v5
         with:
+          platforms: linux/amd64,linux/arm64
           context: .
           push: true
           build-args: |
